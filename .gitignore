@@ -1,0 +1,7 @@
+.*.swp
+.*.swo
+*~
+client/peerdiscovery_query
+daemon/peerdiscovery_daemon
+build/
+
