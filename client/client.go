@@ -1,4 +1,4 @@
-package local_peer_discovery_client
+package main
 
 /*
 
@@ -15,7 +15,7 @@ By Mark Sheahan, ScriptRock Inc
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ScriptRock/local_peer_discovery/common"
+	"github.com/ScriptRock/peerdiscovery/common"
 	"io/ioutil"
 	"net/http"
 )

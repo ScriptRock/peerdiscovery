@@ -1,4 +1,4 @@
-package local_peer_discovery_daemon
+package main
 
 /*
 
@@ -15,7 +15,7 @@ import (
 	"code.google.com/p/go-uuid/uuid"
 	"encoding/json"
 	"fmt"
-	"github.com/ScriptRock/local_peer_discovery/common"
+	"github.com/ScriptRock/peerdiscovery/common"
 	"net"
 	"net/http"
 	"time"

@@ -1,5 +1,5 @@
 BINS = client/peerdiscovery_query daemon/peerdiscovery_daemon
-VERSION = 0.1
+VERSION = 0.1.0
 OS = $(shell uname -s)
 ARCH = $(shell uname -m)
 PACKAGE_NAME = scriptrock_peerdiscovery-$(VERSION)-$(OS)-$(ARCH)
