@@ -15,6 +15,7 @@ import (
 	"code.google.com/p/go-uuid/uuid"
 	"encoding/json"
 	"fmt"
+	"github.com/ScriptRock/mdns"
 	"github.com/ScriptRock/peerdiscovery/common"
 	"net"
 	"net/http"
@@ -50,7 +51,6 @@ func pollAddress(iface *net.Interface, ip *net.IP, ipnet *net.IPNet, port int, c
 		fmt.Printf("Cannot open socket, interface %s addr %s:%d: %s\n",
 			iface.Name, bcip.String(), port, err.Error())
 	} else {
-		//fmt.Printf("Tx  '%s'\n", string(currentState))
 		expectedLen := len(currentState)
 		i, err := socket.Write(currentState)
 		if err != nil {
@@ -124,13 +124,15 @@ type LocalAddrStore struct {
 }
 
 type StateUpdateChannels struct {
-	myAddrs                  chan []*LocalAddr
-	peerPacket               chan PeerPacket
-	currentStateJsonRequest  chan int
-	currentStateJsonResponse chan []byte
-	currentStateAllRequest   chan int
-	currentStateAllResponse  chan []byte
-	errors                   chan error
+	myAddrs                      chan []*LocalAddr
+	peerPacket                   chan PeerPacket
+	currentStatePollDataRequest  chan int
+	currentStatePollDataResponse chan []byte
+	currentStateRequest          chan int
+	currentStateResponse         chan []byte
+	pollRequest                  chan bool
+	pollTrigger                  chan int
+	errors                       chan error
 }
 
 type PeerState struct {
@@ -146,22 +148,32 @@ func NewStateUpdateChannels() *StateUpdateChannels {
 	s := new(StateUpdateChannels)
 	s.myAddrs = make(chan []*LocalAddr)
 	s.peerPacket = make(chan PeerPacket)
-	s.currentStateJsonRequest = make(chan int)
-	s.currentStateJsonResponse = make(chan []byte)
-	s.currentStateAllRequest = make(chan int)
-	s.currentStateAllResponse = make(chan []byte)
+	s.currentStatePollDataRequest = make(chan int)
+	s.currentStatePollDataResponse = make(chan []byte)
+	s.currentStateRequest = make(chan int)
+	s.currentStateResponse = make(chan []byte)
+	s.pollRequest = make(chan bool)
+	s.pollTrigger = make(chan int)
 	s.errors = make(chan error)
 	return s
 }
 
 func (s *StateUpdateChannels) GetCurrentStateJson(lim int) []byte {
-	s.currentStateJsonRequest <- lim
-	return <-s.currentStateJsonResponse
+	s.currentStatePollDataRequest <- lim
+	return <-s.currentStatePollDataResponse
 }
 
 func (s *StateUpdateChannels) GetCurrentStateAll() []byte {
-	s.currentStateAllRequest <- 0
-	return <-s.currentStateAllResponse
+	s.currentStateRequest <- 0
+	return <-s.currentStateResponse
+}
+
+func (s *StateUpdateChannels) requestActivePoll() {
+	s.pollRequest <- false
+}
+
+func (s *StateUpdateChannels) requestIdlePoll() {
+	s.pollRequest <- true
 }
 
 type Peer struct {
@@ -241,8 +253,8 @@ func (s *PeerState) localAddr(str string) *LocalAddr {
 	return nil
 }
 
-func (s *PeerState) handlePeerPacket(peerPacket PeerPacket) {
-	// yay, a peer
+func (s *PeerState) handlePeerPacket(peerPacket PeerPacket) bool {
+	shouldPoll := false
 	peerAddr := peerPacket.addr.String()
 	if peerHost, _, err := net.SplitHostPort(peerAddr); err != nil {
 		fmt.Printf("Error parsing peerPacket address '%s': %s\n", peerAddr, err.Error())
@@ -292,9 +304,11 @@ func (s *PeerState) handlePeerPacket(peerPacket PeerPacket) {
 			}
 			if groupMatch && peer.uuid != "" && peer.uuid != s.myselfUUID && peer.localAddr != nil {
 				s.peers[peerHost] = peer
+				shouldPoll = true
 			}
 		}
 	}
+	return shouldPoll
 }
 
 func (s *PeerState) toJson(lim int) []byte {
@@ -346,12 +360,12 @@ func (s *PeerState) getAll() []byte {
 	}
 }
 
-func stateLoop(meta string, group string, stateChans *StateUpdateChannels) {
+func stateLoop(meta string, group string, myselfUUID string, stateChans *StateUpdateChannels) {
 	state := PeerState{
 		meta:        meta,
 		group:       group,
 		expireDelta: 30 * time.Second,
-		myselfUUID:  uuid.New(),
+		myselfUUID:  myselfUUID,
 		myAddrs:     make(map[string]LocalAddrStore), // timeouts to update
 		peers:       make(map[string]Peer),           // peer list
 	}
@@ -363,12 +377,16 @@ func stateLoop(meta string, group string, stateChans *StateUpdateChannels) {
 			state.updateMyAddrs(myAddrs)
 			state.runExcludes()
 		case peerPacket := <-stateChans.peerPacket:
-			state.handlePeerPacket(peerPacket)
+			shouldRequestPoll := state.handlePeerPacket(peerPacket)
 			state.runExcludes()
-		case lim := <-stateChans.currentStateJsonRequest:
-			stateChans.currentStateJsonResponse <- state.toJson(lim)
-		case <-stateChans.currentStateAllRequest:
-			stateChans.currentStateAllResponse <- state.getAll()
+			if shouldRequestPoll {
+				stateChans.requestActivePoll()
+			}
+		case lim := <-stateChans.currentStatePollDataRequest:
+			stateChans.currentStatePollDataResponse <- state.toJson(lim)
+		case <-stateChans.currentStateRequest:
+			stateChans.currentStateResponse <- state.getAll()
+			stateChans.requestActivePoll()
 		case <-cleanup:
 			state.cleanup()
 			state.runExcludes()
@@ -386,19 +404,15 @@ func pollOnAllInterfaces(port int, stateChans *StateUpdateChannels) {
 		fmt.Println(err)
 	} else {
 		for _, iface := range ifaces {
-			//fmt.Println(iface)
 			if (iface.Flags & net.FlagBroadcast) != 0 {
 				if iface_addrs, err := iface.Addrs(); err != nil {
 					fmt.Printf("Error getting addresses for interface '%s': %s\n", iface.Name, err.Error())
 				} else {
 					for _, iface_addr := range iface_addrs {
-						//fmt.Println(iface_addr)
 						ipstr := iface_addr.String()
 						if ip, ipnet, err := net.ParseCIDR(ipstr); err != nil {
 							fmt.Printf("Error parsing IP address '%s'\n", ipstr, err.Error())
 						} else {
-							//fmt.Println(ip)
-							//fmt.Println(ipnet)
 							if shouldPollAddress(&iface, &ip, ipnet, port) {
 								localAddr := LocalAddr{
 									iface: &iface,
@@ -420,9 +434,69 @@ func pollOnAllInterfaces(port int, stateChans *StateUpdateChannels) {
 	stateChans.myAddrs <- myAddrs
 }
 
-func main() {
+func pollTrigger(port int, stateChans *StateUpdateChannels) {
+	for {
+		<-stateChans.pollTrigger
+		pollOnAllInterfaces(port, stateChans)
+	}
+}
 
-	cfg, err := common.New()
+func pollAggregator(idlePollInterval time.Duration, stateChans *StateUpdateChannels) {
+	polls := 0
+	lastPoll := time.Now()
+	minActivePoll := time.Second / 2
+	for {
+		isIdlePoll := <-stateChans.pollRequest
+		isActivePoll := !isIdlePoll
+		now := time.Now()
+		shouldActivePoll := isActivePoll && now.After(lastPoll.Add(minActivePoll))
+		shouldIdlePoll := isIdlePoll && now.After(lastPoll.Add(idlePollInterval))
+		shouldPoll := polls == 0 || shouldActivePoll || shouldIdlePoll
+		if debug {
+			fmt.Printf("pollreq... %d polls, trigger %s\n", polls, boolStr(shouldPoll))
+		}
+		if shouldPoll {
+			lastPoll = now
+			polls = polls + 1
+			stateChans.pollTrigger <- 1
+		}
+	}
+}
+
+func mdnsEtcdServer() {
+	// Setup our service export
+	service := &mdns.MDNSService{
+		Instance: "rofl",
+		Service:  "_etcd._tcp",
+		Domain:   "local",
+		Port:     7001,
+	}
+	if err := service.Init(); err != nil {
+		fmt.Println("mDNS error", err)
+	}
+
+	// Create the mDNS server, defer shutdown
+	mdns.NewServer(&mdns.Config{Zone: service})
+
+}
+
+func mdnsHostServer(host string) {
+	// Setup our service export
+	service := &mdns.MDNSService{
+		AliasHostName: host,
+		Domain:        "local",
+	}
+	if err := service.Init(); err != nil {
+		fmt.Println("mDNS error", err)
+	}
+
+	// Create the mDNS server, defer shutdown
+	mdns.NewServer(&mdns.Config{Zone: service})
+}
+
+func daemon() {
+
+	cfg, err := common.New(true)
 	if err != nil {
 		fmt.Printf("Error parsing options: %s\n", err.Error())
 		return
@@ -433,9 +507,16 @@ func main() {
 
 	stateChans := NewStateUpdateChannels()
 
-	go stateLoop(cfg.Meta, cfg.Group, stateChans)
+	myselfUUID := uuid.New()
+	fmt.Println("Self mDNS ID:", myselfUUID)
+
+	go mdnsHostServer(myselfUUID)
+	go mdnsEtcdServer()
+	go stateLoop(cfg.Meta, cfg.Group, myselfUUID, stateChans)
 	go openUDPListener(cfg.UDPPort, stateChans)
 	go openHTTPServer(cfg.QueryPort, stateChans)
+	go pollAggregator(cfg.PollInterval, stateChans)
+	go pollTrigger(cfg.UDPPort, stateChans)
 	go func() {
 		err := <-stateChans.errors
 		finished = true
@@ -444,11 +525,15 @@ func main() {
 
 	loops := 0
 	for !finished {
-		pollOnAllInterfaces(cfg.UDPPort, stateChans)
+		stateChans.requestIdlePoll()
 		loops = loops + 1
 		if cfg.MaxLoops > 0 && loops >= cfg.MaxLoops {
 			break
 		}
 		time.Sleep(cfg.PollInterval)
 	}
+}
+
+func main() {
+	daemon()
 }

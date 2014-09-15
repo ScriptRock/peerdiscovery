@@ -14,9 +14,10 @@ type ConfigurationOptions struct {
 	UDPPortSetter      func(int)    `long:"udp_port" description:"Port to listen on & send to for UDP broadcast"`
 	QueryPortSetter    func(int)    `long:"query_port" description:"Port for local http queries"`
 	PollIntervalSetter func(int)    `long:"poll_interval" description:"Period (seconds) between UDP broadcasts"`
-	MaxLoopsSetter     func(int)    `long:"max_loops" description:"Number of times we may broadcast before terminating"`
+	MaxLoopsSetter     func(int)    `long:"max_loops" description:"Number of times we may query or idle-poll before terminating"`
 	DebugSetter        func()       `long:"debug" description:"Debug mode"`
 	MatchedOnlySetter  func(bool)   `long:"matched_only" description:"Only show peers whom have seen me (default true)"`
+	EtcdConfSetter     func(string) `long:"etcd_conf" description:"Output is in etcd conf file format, to specified file"`
 }
 
 type Config struct {
@@ -28,6 +29,8 @@ type Config struct {
 	MaxLoops     int
 	Debug        bool
 	MatchedOnly  bool
+	EtcdConf     bool
+	EtcdConfPath string
 	Argv         []string
 }
 
@@ -40,7 +43,7 @@ type PeerReport struct {
 	PeerSeenMe   bool
 }
 
-func (c *Config) load() error {
+func (c *Config) load(is_server bool) error {
 	default_port := 44001
 	default_udp_port := default_port
 	default_query_port := default_port
@@ -49,10 +52,17 @@ func (c *Config) load() error {
 	c.Group = "default"
 	c.UDPPort = default_udp_port
 	c.QueryPort = default_query_port
-	c.MaxLoops = 0
-	c.PollInterval = 5 * time.Second
+	if is_server {
+		c.PollInterval = 5 * time.Second
+		c.MaxLoops = 0
+	} else {
+		c.PollInterval = 1 * time.Second
+		c.MaxLoops = 10
+	}
 	c.Debug = false
 	c.MatchedOnly = true
+	c.EtcdConf = false
+	c.EtcdConfPath = ""
 
 	if s := os.Getenv("SCRIPTROCK_LOCAL_PEER_DISCOVERY_META"); s != "" {
 		c.Meta = s
@@ -114,6 +124,10 @@ func (c *Config) load() error {
 	opts.MatchedOnlySetter = func(b bool) {
 		c.MatchedOnly = true
 	}
+	opts.EtcdConfSetter = func(s string) {
+		c.EtcdConf = true
+		c.EtcdConfPath = s
+	}
 
 	argv, err := go_flags.Parse(opts)
 
@@ -122,8 +136,8 @@ func (c *Config) load() error {
 	return err
 }
 
-func New() (*Config, error) {
+func New(is_server bool) (*Config, error) {
 	c := new(Config)
-	err := c.load()
+	err := c.load(is_server)
 	return c, err
 }

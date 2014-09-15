@@ -15,9 +15,12 @@ By Mark Sheahan, ScriptRock Inc
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ScriptRock/mdns"
 	"github.com/ScriptRock/peerdiscovery/common"
 	"io/ioutil"
 	"net/http"
+	"sort"
+	"time"
 )
 
 func boolStr(b bool) string {
@@ -47,26 +50,86 @@ func pollServer(cfg *common.Config) ([]common.PeerReport, error) {
 	}
 }
 
-func main() {
-	cfg, err := common.New()
+func makeEtcdConf(cfg *common.Config) {
+	loops := 0
+	for {
+		all, err := pollServer(cfg)
+		if err != nil {
+			fmt.Printf("Error polling server: %s\n", err.Error())
+		}
+
+		addressesLowerThanMine := make([]string, 0)
+		for _, p := range all {
+			if !cfg.MatchedOnly || (cfg.MatchedOnly && p.SeenDirectly && p.PeerSeenMe) {
+				if p.PeerAddr < p.LocalAddr {
+					addressesLowerThanMine = append(addressesLowerThanMine, p.PeerAddr)
+				}
+			}
+		}
+		sort.Strings(addressesLowerThanMine)
+
+		peerStr := "["
+		for i, a := range addressesLowerThanMine {
+			if i > 0 {
+				peerStr = peerStr + ","
+			}
+			peerStr = peerStr + fmt.Sprintf("\"%s:%d\"", a, 7001)
+		}
+		peerStr = peerStr + "]"
+		fmt.Println("Loop", loops, " peers ", peerStr)
+
+		loops = loops + 1
+		if cfg.MaxLoops > 0 && loops >= cfg.MaxLoops {
+			break
+		}
+		time.Sleep(cfg.PollInterval)
+	}
+}
+
+func mDnsClient() {
+	// Make a channel for results and start listening
+	entriesCh := make(chan *mdns.ServiceEntry, 4)
+	go func() {
+		for entry := range entriesCh {
+			fmt.Printf("Got new entry: %v\n", entry)
+		}
+	}()
+
+	// Start the lookup
+	mdns.Lookup("_etcd._tcp", entriesCh)
+	close(entriesCh)
+	time.Sleep(time.Hour)
+}
+
+func client() {
+	cfg, err := common.New(false)
 	if err != nil {
 		fmt.Printf("Error parsing options: %s\n", err.Error())
 		return
 	}
 
-	if all, err := pollServer(cfg); err != nil {
-		fmt.Printf("Error polling server: %s\n", err.Error())
+	if cfg.EtcdConf {
+		makeEtcdConf(cfg)
 	} else {
-		for _, p := range all {
-			if !cfg.MatchedOnly || (cfg.MatchedOnly && p.SeenDirectly && p.PeerSeenMe) {
-				fmt.Printf("%s %s %s %s %s %s\n",
-					p.LocalAddr,
-					p.PeerAddr,
-					boolStr(p.SeenDirectly),
-					boolStr(p.PeerSeenMe),
-					p.PeerUUID,
-					p.PeerMeta)
+		if all, err := pollServer(cfg); err != nil {
+			fmt.Printf("Error polling server: %s\n", err.Error())
+		} else {
+			for _, p := range all {
+				if !cfg.MatchedOnly || (cfg.MatchedOnly && p.SeenDirectly && p.PeerSeenMe) {
+					fmt.Printf("%s %s %s %s %s %s\n",
+						p.LocalAddr,
+						p.PeerAddr,
+						boolStr(p.SeenDirectly),
+						boolStr(p.PeerSeenMe),
+						p.PeerUUID,
+						p.PeerMeta)
+				}
 			}
 		}
 	}
+}
+
+func main() {
+	mDnsClient()
+	//client()
 }
