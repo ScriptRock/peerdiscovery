@@ -25,8 +25,11 @@ $(BUILD_DIR)/$(TARBALL): $(BUILD_DIR)/$(PACKAGE_NAME)
 
 package: $(BUILD_DIR)/$(TARBALL)
 
+goxc_coreos:
+	goxc -bc="linux,amd64" -pv coreos -d=build/
+
 goxc:
-	goxc -bc="linux,!arm darwin,amd64" -pv $(VERSION)
+	goxc -bc="linux,!arm, darwin,!arm" -pv $(VERSION) -d=build/
 
 clean: force
 	rm -rf $(BUILD_DIR)/ $(BINS)

@@ -33,6 +33,7 @@ func mdnsEtcdServer(cfg *common.Config, etcd *common.EtcdConfig) {
 		fmt.Println("mDNS error", err)
 	}
 
+	fmt.Printf("Starting %s mDNS responder...\n", cfg.MDNSService)
 	mdns.NewServer(&mdns.Config{Zone: service})
 }
 
@@ -45,11 +46,12 @@ func mdnsHostServer(cfg *common.Config) {
 		fmt.Println("mDNS error", err)
 	}
 
+	fmt.Printf("Starting hostname alias (%s) mDNS responder...\n", cfg.UUID)
 	mdns.NewServer(&mdns.Config{Zone: service})
 }
 
 func Daemon() {
-	cfg, etcd, args := common.LoadConfigs()
+	cfg, etcd, _, args := common.LoadConfigs()
 	if len(args) > 1 {
 		fmt.Printf("Error parsing options; un-parsed options remain: %s\n", strings.Join(args[1:], ", "))
 		os.Exit(1)
@@ -64,4 +66,3 @@ func Daemon() {
 		time.Sleep(time.Hour)
 	}
 }
-

@@ -32,27 +32,6 @@ func boolStr(b bool) string {
 	}
 }
 
-/*
-func pollServer(cfg *common.Config) (error) {
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/%s", cfg.QueryPort, cfg.Group))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var all []common.PeerReport
-	if err := json.Unmarshal(body, &all); err != nil {
-		return nil, err
-	} else {
-		return all, nil
-	}
-}
-*/
-
 type ClientState struct {
 	cfg                   *common.Config
 	etcd                  *common.EtcdConfig
@@ -127,19 +106,25 @@ func (cs *ClientState) pollLoop() {
 }
 
 func (cs *ClientState) checkEnt(ent *mdns.ServiceEntry) (*net.Interface, net.IP, net.IP, error) {
+	// only use IPv4
 	peerIP := ent.AddrV4
-	if strings.HasPrefix(ent.Name, cs.cfg.UUID) {
-		return nil, nil, nil, fmt.Errorf("Prefix UUID is from self")
-	} else if peerIP == nil {
+	if peerIP == nil {
 		return nil, nil, nil, fmt.Errorf("No IPv4 address present")
 	}
 	// This technically restricts valid configurations that go through routers. Will need to re-visit.
 	// The objective is to prevent NATs where the return path will not work, not routers where the return path will.
 	// Eventually, must set up a tcp/http server on the destination host that echoes back the connecting IP address,
 	// and compare against that.
+	// There is also an issue with multiple addresses on the same subnet on the same interface; but this is dumb anyway
 	iface, _, myIP, err := common.LocalNetForIp(ent.AddrV4)
 	if err == nil && myIP.Equal(peerIP) {
 		return nil, nil, nil, fmt.Errorf("IP address is self (%s = %s)", myIP.String(), peerIP.String())
+	}
+	if strings.HasPrefix(ent.Name, cs.cfg.UUID) {
+		// This is bad; duplicate UUID from someone that isn't us. Presumably caused by a cloned VM.
+		// In this case, panic, delete old id, die, and on the next respawn we'll regenerate the id
+		common.PanicDuplicateClusterInstanceUUID()
+		return nil, nil, nil, fmt.Errorf("Prefix UUID is from self")
 	}
 	return iface, myIP, peerIP, err
 }
@@ -171,7 +156,7 @@ func (cs *ClientState) stateTask() {
 			} else {
 				peerMDNSHostname := cs.peerMDNSHostname(ent)
 				fmt.Printf("etcd server mDNS response: IP %s mDNS hostname %s\n", peerIP.String(), peerMDNSHostname)
-				url := fmt.Sprintf("http://%s:%d/v2/keys/", peerMDNSHostname, cs.etcd.ClientPort)
+				url := fmt.Sprintf("http://%s:%d/v2/keys/", peerIP.String(), cs.etcd.ClientPort)
 				if _, err := http.Get(url); err != nil {
 					fmt.Printf("Error validating peer etcd server at '%s': %s\n", url, err.Error())
 				} else {
@@ -199,7 +184,7 @@ func (cs *ClientState) stateTask() {
 }
 
 func Client() {
-	cfg, etcd, args := common.LoadConfigs()
+	cfg, etcd, fleet, args := common.LoadConfigs()
 	if len(args) > 1 {
 		fmt.Printf("Error parsing options; un-parsed options remain: %s\n", strings.Join(args[1:], ", "))
 		os.Exit(1)
@@ -216,5 +201,5 @@ func Client() {
 
 	cs.stateTask()
 	etcd.WriteFile()
+	fleet.WriteFile(etcd)
 }
-

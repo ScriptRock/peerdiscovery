@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"strings"
 	"time"
+	"os"
 )
 
 type Config struct {
@@ -21,23 +22,41 @@ type Config struct {
 	Debug              bool      `long:"debug" description:"Debug mode"`
 }
 
-func (c *Config) load(argsin []string) ([]string, error) {
-	clusterUUIDPath := "/etc/etcd/cluster_uuid"
-	if clusterUUID, err := ioutil.ReadFile(clusterUUIDPath); err != nil {
-		c.UUID = uuid.New()
-		if err := ioutil.WriteFile(clusterUUIDPath, []byte(c.UUID), 0644); err != nil {
-			fmt.Printf("Could not open '%s' for writing: %s\n", clusterUUIDPath, err.Error())
+var ClusterInstanceUUIDPath string = "/etc/etcd/cluster_instance_uuid"
+
+func PanicDuplicateClusterInstanceUUID() {
+	fmt.Printf("Duplicate cluster instance UUID encountered; deleting old UUID and exiting\n")
+	if err := os.Remove(ClusterInstanceUUIDPath); err != nil {
+		fmt.Printf("Could not delete '%s': %s\n", ClusterInstanceUUIDPath, err.Error())
+	}
+	os.Exit(1)
+}
+
+func LoadClusterInstanceUUID() string {
+	clusterUUID := ""
+	// attempt to 
+	if fileData, err := ioutil.ReadFile(ClusterInstanceUUIDPath); err != nil {
+		clusterUUID = uuid.New()
+		if err := ioutil.WriteFile(ClusterInstanceUUIDPath, []byte(clusterUUID), 0644); err != nil {
+			fmt.Printf("Could not open '%s' for writing: %s\n", ClusterInstanceUUIDPath, err.Error())
 		}
 	} else {
-		u := strings.TrimSpace(string(clusterUUID))
-		if uuid.Parse(u) == nil {
-			fmt.Printf("UUID from file '%s' is invalid\n", clusterUUIDPath)
-			u = uuid.New()
+		clusterUUID = strings.TrimSpace(string(fileData))
+		if uuid.Parse(clusterUUID) == nil {
+			fmt.Printf("UUID from file '%s' is invalid\n", ClusterInstanceUUIDPath)
+			clusterUUID = uuid.New()
+			// write out a new valid one
+			if err := ioutil.WriteFile(ClusterInstanceUUIDPath, []byte(clusterUUID), 0644); err != nil {
+				fmt.Printf("Could not open '%s' for writing: %s\n", ClusterInstanceUUIDPath, err.Error())
+			}
 		}
-		c.UUID = u
 	}
+	fmt.Printf("Cluster Instance UUID: %s\n", clusterUUID)
+	return clusterUUID
+}
 
-	// TODO FIXME load UUID from a file
+func (c *Config) load(argsin []string) ([]string, error) {
+	c.UUID = LoadClusterInstanceUUID()
 	c.MDNSInstance = c.UUID
 	c.MDNSBootupService = "_scriptrock_etcd_bootup._tcp"
 	c.MDNSService = "_scriptrock_etcd._tcp"

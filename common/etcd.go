@@ -243,12 +243,15 @@ bind_addr = "%s:%d"
 #sync_interval = 5.0
 #
 `,
-		cfg.Name,                   // name
+		cfg.Name,                       // name
 		cfg.ClientAddr, cfg.ClientPort, // addr
 		cfg.ClientBindAddr, cfg.ClientPort, // bind_addr
 		strings.Join(peers, ","),   // peers
 		cfg.PeerAddr, cfg.PeerPort, // peer_addr
 		cfg.PeerBindAddr, cfg.PeerPort) // peer_bind_addr
 
-	ioutil.WriteFile(cfg.ConfPath, []byte(conf), 0644)
+	fmt.Printf("Writing etcd conf file to '%s'\n", cfg.ConfPath)
+	if err := ioutil.WriteFile(cfg.ConfPath, []byte(conf), 0644); err != nil {
+		fmt.Printf("Could not write conf file '%s': %s\n", cfg.ConfPath, err.Error())
+	}
 }
