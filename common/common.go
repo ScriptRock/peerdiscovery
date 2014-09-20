@@ -8,26 +8,23 @@ import (
 	"strings"
 )
 
-func LoadConfigs() (*Config, *EtcdConfig, *FleetConfig, []string) {
+func LoadConfigs() (*Config, *EtcdConfig, *FleetConfig, []string, error) {
 	argv1 := os.Args
 	cfg, argv2, err := NewConfig(argv1)
 	if err != nil {
-		fmt.Printf("Error parsing main options: %s\n", err.Error())
-		os.Exit(1)
+		return nil, nil, nil, nil, fmt.Errorf("Error parsing main options: %s\n", err.Error())
 	}
 	etcd, argv3, err := NewEtcdConfig(argv2, cfg.UUID)
 	if err != nil {
-		fmt.Printf("Error parsing etcd options: %s\n", err.Error())
-		os.Exit(1)
+		return nil, nil, nil, nil, fmt.Errorf("Error parsing etcd options: %s\n", err.Error())
 	}
 	fleet, argv4, err := NewFleetConfig(argv3)
 	if err != nil {
-		fmt.Printf("Error parsing fleet options: %s\n", err.Error())
-		os.Exit(1)
+		return nil, nil, nil, nil, fmt.Errorf("Error parsing fleet options: %s\n", err.Error())
 	}
 	args := argv4
 
-	return cfg, etcd, fleet, args
+	return cfg, etcd, fleet, args, nil
 }
 
 func LocalNetForIp(fromIP net.IP) (*net.Interface, net.Addr, net.IP, error) {
