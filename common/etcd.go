@@ -10,8 +10,9 @@ import (
 
 type EtcdPeer struct {
 	Interface *net.Interface
-	PeerIP    net.IP
 	LocalIP   net.IP
+	PeerIP    net.IP
+	PeerPort  int
 }
 
 type EtcdConfig struct {
@@ -23,6 +24,7 @@ type EtcdConfig struct {
 	PeerAddr       string   `long:"etcd_peer_addr" description:"etcd peer address (default 0.0.0.0)"`
 	PeerBindAddr   string   `long:"etcd_peer_bind_addr" description:"etcd peer bind address (default 0.0.0.0)"`
 	PeerPort       int      `long:"etcd_peer_port" description:"etcd peer port (default 7001)"`
+	DiscoveryURL   string   `long:"etcd_discovery_url" description:"etcd peer discovery url"`
 	Peers          []string // found through mDNS etc
 	ServerPeers    map[string]EtcdPeer
 	BootingPeers   map[string]EtcdPeer
@@ -40,6 +42,7 @@ func (c *EtcdConfig) load(argsin []string, name string) ([]string, error) {
 	c.ClientBindAddr = "0.0.0.0"
 	c.PeerBindAddr = "0.0.0.0"
 	c.PeerPort = 7001
+	c.DiscoveryURL = ""
 	c.Peers = make([]string, 0)
 	c.ServerPeers = make(map[string]EtcdPeer)
 	c.BootingPeers = make(map[string]EtcdPeer)
@@ -68,19 +71,21 @@ func (c *EtcdConfig) load(argsin []string, name string) ([]string, error) {
 	return argsout, err
 }
 
-func (c *EtcdConfig) AddServerPeer(iface *net.Interface, localIP net.IP, peerIP net.IP) {
+func (c *EtcdConfig) AddServerPeer(iface *net.Interface, localIP net.IP, peerIP net.IP, peerPort int) {
 	c.ServerPeers[peerIP.String()] = EtcdPeer{
 		Interface: iface,
 		LocalIP:   localIP,
 		PeerIP:    peerIP,
+		PeerPort:  peerPort,
 	}
 }
 
-func (c *EtcdConfig) AddBootingPeer(iface *net.Interface, localIP net.IP, peerIP net.IP) {
+func (c *EtcdConfig) AddBootingPeer(iface *net.Interface, localIP net.IP, peerIP net.IP, peerPort int) {
 	c.BootingPeers[peerIP.String()] = EtcdPeer{
 		Interface: iface,
 		LocalIP:   localIP,
 		PeerIP:    peerIP,
+		PeerPort:  peerPort,
 	}
 }
 
@@ -199,8 +204,10 @@ func (cfg *EtcdConfig) WriteFile() {
 	cfg.setupAddresses()
 
 	peers := make([]string, 0)
-	for k, _ := range cfg.ServerPeers {
-		peers = append(peers, fmt.Sprintf("\"%s:%d\"", k, cfg.PeerPort))
+	if cfg.DiscoveryURL == "" {
+		for k, _ := range cfg.ServerPeers {
+			peers = append(peers, fmt.Sprintf("\"%s:%d\"", k, cfg.PeerPort))
+		}
 	}
 
 	// wrap each peer in quotes
@@ -217,7 +224,7 @@ bind_addr = "%s:%d"
 #cors = []
 #cpu_profile_file = ""
 #data_dir = "."
-#discovery = "http://etcd.local:4001/v2/keys/_etcd/registry/examplecluster"
+discovery = "%s"
 #http_read_timeout = 10.0
 #http_write_timeout = 10.0
 #key_file = ""
@@ -243,12 +250,16 @@ bind_addr = "%s:%d"
 #sync_interval = 5.0
 #
 `,
-		cfg.Name,                   // name
+		cfg.Name,                       // name
 		cfg.ClientAddr, cfg.ClientPort, // addr
 		cfg.ClientBindAddr, cfg.ClientPort, // bind_addr
+		cfg.DiscoveryURL,           // discovery
 		strings.Join(peers, ","),   // peers
 		cfg.PeerAddr, cfg.PeerPort, // peer_addr
 		cfg.PeerBindAddr, cfg.PeerPort) // peer_bind_addr
 
-	ioutil.WriteFile(cfg.ConfPath, []byte(conf), 0644)
+	fmt.Printf("Writing etcd conf file to '%s'\n", cfg.ConfPath)
+	if err := ioutil.WriteFile(cfg.ConfPath, []byte(conf), 0644); err != nil {
+		fmt.Printf("Could not write conf file '%s': %s\n", cfg.ConfPath, err.Error())
+	}
 }

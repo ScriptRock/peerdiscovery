@@ -1,5 +1,5 @@
 BUILD_DIR = build
-BINS = build/peerdiscovery_etcd_conf build/peerdiscovery_daemon
+BINS = build/scriptrock_etcd_conf
 VERSION = 0.1.0
 OS = $(shell uname -s)
 ARCH = $(shell uname -m)
@@ -25,11 +25,14 @@ $(BUILD_DIR)/$(TARBALL): $(BUILD_DIR)/$(PACKAGE_NAME)
 
 package: $(BUILD_DIR)/$(TARBALL)
 
+goxc_coreos:
+	cd scriptrock_etcd_conf && goxc -bc="linux,amd64" -pv coreos -d=../build/
+
 goxc:
-	goxc -bc="linux,!arm darwin,amd64" -pv $(VERSION)
+	cd scriptrock_etcd_conf && goxc -bc="linux,!arm, darwin,!arm" -pv $(VERSION) -d=../build/
 
 clean: force
-	rm -rf $(BUILD_DIR)/ $(BINS)
+	rm -rf $(BUILD_DIR)/
 
 push_package_to_github: $(BUILD_DIR)/$(TARBALL)
 	curl -H "Content-Type: application/x-compressed" --upload-file $< $(GITHUB_RELEASE_URL)/$(VERSION)/assets?name=${<F}
