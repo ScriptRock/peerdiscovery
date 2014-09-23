@@ -22,13 +22,23 @@ type Config struct {
 	Debug              bool      `long:"debug" description:"Debug mode"`
 }
 
-var ClusterInstanceUUIDPath string = "/etc/etcd/cluster_instance_uuid"
+var ClusterInstanceUUIDPath string = "/etc/machine-id"
 
 func DuplicateClusterInstanceUUID() {
-	fmt.Printf("Duplicate cluster instance UUID encountered; deleting old UUID and exiting\n")
+	fmt.Printf("Duplicate cluster instance UUID encountered; must delete: '%s' and reboot\n", ClusterInstanceUUIDPath)
 	if err := os.Remove(ClusterInstanceUUIDPath); err != nil {
 		fmt.Printf("Could not delete '%s': %s\n", ClusterInstanceUUIDPath, err.Error())
 	}
+}
+
+func uuidValid(u string) bool {
+	if len(u) == 32 {
+		u = u[0:8] + "-" + u[8:12] + "-" + u[12:16] + "-" + u[16:20] + "-" + u[20:]
+	}
+	if uuid.Parse(u) != nil {
+		return true
+	}
+	return false
 }
 
 func LoadClusterInstanceUUID() string {
@@ -40,16 +50,17 @@ func LoadClusterInstanceUUID() string {
 		}
 	} else {
 		clusterUUID = strings.TrimSpace(string(fileData))
-		if uuid.Parse(clusterUUID) == nil {
+		if !uuidValid(clusterUUID) {
 			fmt.Printf("UUID from file '%s' is invalid\n", ClusterInstanceUUIDPath)
 			clusterUUID = uuid.New()
+			clusterUUID = strings.Replace(clusterUUID, "-", "", -1)
 			// write out a new valid one
 			if err := ioutil.WriteFile(ClusterInstanceUUIDPath, []byte(clusterUUID), 0644); err != nil {
 				fmt.Printf("Could not open '%s' for writing: %s\n", ClusterInstanceUUIDPath, err.Error())
 			}
 		}
 	}
-	fmt.Printf("Cluster Instance UUID: %s\n", clusterUUID)
+	fmt.Printf("Cluster Instance UUID (machine-id): %s\n", clusterUUID)
 	return clusterUUID
 }
 
