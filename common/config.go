@@ -1,13 +1,14 @@
 package common
 
 import (
-	"code.google.com/p/go-uuid/uuid"
 	"fmt"
-	go_flags "github.com/jessevdk/go-flags"
 	"io/ioutil"
 	"os"
 	"strings"
 	"time"
+
+	go_flags "github.com/jessevdk/go-flags"
+	"github.com/pborman/uuid"
 )
 
 type Config struct {

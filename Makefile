@@ -37,6 +37,9 @@ clean: force
 push_package_to_github: $(BUILD_DIR)/$(TARBALL)
 	curl -H "Content-Type: application/x-compressed" --upload-file $< $(GITHUB_RELEASE_URL)/$(VERSION)/assets?name=${<F}
 
-.PHONY: default package force clean
+fmt: force
+	gofmt -w `find . -name \*.go`
+
+.PHONY: default package force clean fmt
 
 
